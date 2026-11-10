@@ -1,0 +1,29 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Database
+data/*.db
+*.sqlite3
+
+# Personal profile
+data/user_profile.json
+
+# Logs
+logs/
+*.log
+
+# React
+frontend/node_modules/
+frontend/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
