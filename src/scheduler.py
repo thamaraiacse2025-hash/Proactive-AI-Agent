@@ -10,30 +10,46 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "data" / "internships.db"
 
-# Background scheduler log file
+# Ensure project root is available for imports
+sys.path.insert(0, str(BASE_DIR))
+
+# Log directory
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE = LOG_DIR / "scheduler.log"
-sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-sys.stderr = sys.stdout
+log_handle = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
 
-# Import agent after log setup
-from agent import run_proactive_agent
 
-# Indian Standard Time
+# Show output in both terminal and log file
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, message):
+        for stream in self.streams:
+            stream.write(message)
+            stream.flush()
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+sys.stdout = TeeStream(sys.__stdout__, log_handle)
+sys.stderr = TeeStream(sys.__stderr__, log_handle)
+
+
+# Import multi-user agent
+from src.agent import run_proactive_agent
+
+
+# Configuration
 TIMEZONE = ZoneInfo("Asia/Kolkata")
-
-# Search interval
-INTERVAL_HOURS = 6
-
-# Search interval
 INTERVAL_HOURS = 6
 
 
-# Create scheduler state table
 def initialize_scheduler_database():
-
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     connection = sqlite3.connect(DB_PATH)
@@ -45,16 +61,13 @@ def initialize_scheduler_database():
                 last_run_time TEXT
             )
         """)
-
         connection.commit()
 
     finally:
         connection.close()
 
 
-# Get last search time
 def get_last_run_time():
-
     connection = sqlite3.connect(DB_PATH)
 
     try:
@@ -77,9 +90,7 @@ def get_last_run_time():
         connection.close()
 
 
-# Save current search attempt time
 def save_last_run_time(run_time):
-
     connection = sqlite3.connect(DB_PATH)
 
     try:
@@ -96,9 +107,7 @@ def save_last_run_time(run_time):
         connection.close()
 
 
-# Run the internship agent
 def scheduled_agent_run():
-
     current_time = datetime.now(TIMEZONE)
 
     print("\n====================================")
@@ -106,63 +115,52 @@ def scheduled_agent_run():
     print("Time:", current_time)
     print("====================================")
 
-    # Save attempt time before running the agent.
-    # This prevents repeated requests after an unexpected restart.
-    save_last_run_time(current_time)
-
     try:
         run_proactive_agent()
-
-        print("Automatic internship search completed.")
+        print("Automatic internship search completed successfully.")
 
     except Exception as error:
         print("Scheduled agent error:", error)
+
+    finally:
+        # Save the attempt time even if an error occurs
+        save_last_run_time(current_time)
 
 
 # Initialize database
 initialize_scheduler_database()
 
 
-# Calculate next search time
+# Calculate next execution time
 last_run = get_last_run_time()
 current_time = datetime.now(TIMEZONE)
 
 if last_run is None:
-
-    # First-time startup: run immediately
     next_run = current_time
 
     print("First-time scheduler startup.")
-    print("Initial internship search will run immediately.")
+    print("Initial search will run immediately.")
 
 else:
-
     next_run = last_run + timedelta(hours=INTERVAL_HOURS)
 
     if next_run <= current_time:
-
-        # Search interval already completed while laptop was OFF
         next_run = current_time
 
         print("A scheduled search is pending.")
         print("It will run immediately.")
 
     else:
-
-        remaining = next_run - current_time
-
         print("Previous search:", last_run)
         print("Next search:", next_run)
-        print("Remaining time:", remaining)
+        print("Remaining time:", next_run - current_time)
 
 
 # Create scheduler
-scheduler = BlockingScheduler(
-    timezone=TIMEZONE
-)
+scheduler = BlockingScheduler(timezone=TIMEZONE)
 
 
-# Add recurring job
+# Add recurring multi-user agent job
 scheduler.add_job(
     scheduled_agent_run,
     trigger=IntervalTrigger(
@@ -172,7 +170,8 @@ scheduler.add_job(
     id="internship_agent_job",
     max_instances=1,
     coalesce=True,
-    next_run_time=next_run
+    next_run_time=next_run,
+    replace_existing=True
 )
 
 
@@ -182,9 +181,17 @@ print("====================================")
 print("Frequency: Every 6 hours")
 print("Timezone: Asia/Kolkata")
 print("Database:", DB_PATH)
+print("Log file:", LOG_FILE)
 print("Press CTRL + C to stop.")
 print("====================================\n")
 
 
 # Start scheduler
-scheduler.start()
+try:
+    scheduler.start()
+
+except (KeyboardInterrupt, SystemExit):
+    print("Scheduler stopped.")
+
+finally:
+    log_handle.close()
